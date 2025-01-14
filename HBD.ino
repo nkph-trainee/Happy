@@ -1,53 +1,98 @@
-#define BUZZER_PIN D5 // เปลี่ยนพินจาก D2 เป็น D5
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h> // รองรับ HTTPS
 
-int melody[] = {
-  262, 262, 294, 262, 349, 330,  // Happy birthday to you
-  262, 262, 294, 262, 392, 349,  // Happy birthday to you
-  262, 262, 523, 440, 349, 330, 294, // Happy birthday dear [Name]
-  466, 466, 440, 349, 392, 349   // Happy birthday to you
-};
+#define BUZZER_PIN D1
 
-int noteDurations[] = {
-  300, 300, 300, 300, 300, 600,  // ระยะเวลาแต่ละโน้ต
-  300, 300, 300, 300, 300, 600,
-  300, 300, 300, 300, 300, 300, 600,
-  200, 200, 200, 300, 300, 600
-};
+// ข้อมูล Wi-Fi
+const char* ssid = "IT-CENTER_2.4GHz";
+const char* password = "74108520";
 
-unsigned long previousMillis = 0; // ตัวแปรสำหรับจับเวลา
-unsigned long interval = 5000; // เวลาหน่วง 5 วินาที ก่อนเล่นเพลง
+// เพลงและโน้ต
+int melody[] = { 262, 262, 294, 262, 349, 330, 262, 262, 294, 262, 392, 349, 262, 262, 523, 440, 349, 330, 294, 466, 466, 440, 349, 392, 349 };
+int noteDurations[] = { 300, 300, 300, 300, 300, 600, 300, 300, 300, 300, 300, 600, 300, 300, 300, 300, 300, 300, 600, 200, 200, 200, 300, 300, 600 };
 
-int currentNote = 0; // ตัวแปรเก็บหมายเลขโน้ตปัจจุบัน
-bool songStarted = false; // ตัวแปรเช็คว่าเพลงเริ่มเล่นแล้วหรือยัง
+// ตัวแปรจับเวลา
+unsigned long previousNoteMillis = 0; // สำหรับการเล่นเพลง
+unsigned long previousApiMillis = 0;  // สำหรับการดึงข้อมูล API
+unsigned long noteInterval = 0;       // ระยะเวลาในแต่ละโน้ต
+unsigned long apiInterval = 15000;    // ระยะเวลาในการดึง API ทุก 15 วินาที
+
+int currentNote = 0; // โน้ตปัจจุบัน
+bool songPlaying = false; // สถานะการเล่นเพลง
 
 void setup() {
-  pinMode(BUZZER_PIN, OUTPUT); // กำหนดพินที่เชื่อมต่อกับ Buzzer เป็น OUTPUT
-  Serial.begin(115200); // เริ่มต้น Serial Monitor
+  pinMode(BUZZER_PIN, OUTPUT);
+  Serial.begin(115200);
+
+  // เชื่อมต่อ Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
 }
 
 void loop() {
-  unsigned long currentMillis = millis(); // เก็บเวลาปัจจุบัน
+  unsigned long currentMillis = millis();
 
-  // รอ 5 วินาทีก่อนเริ่มเล่นเพลง
-  if (!songStarted && currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis; // รีเซ็ตเวลา
-    songStarted = true; // ตั้งค่าให้เพลงเริ่มเล่น
-    Serial.println("Start playing music"); // แสดงข้อความใน Serial Monitor ว่าเริ่มเล่นเพลง
+  // เล่นเพลงทีละโน้ตโดยไม่ใช้ delay
+  if (songPlaying && currentMillis - previousNoteMillis >= noteInterval) {
+    if (currentNote < sizeof(melody) / sizeof(melody[0])) {
+      noteInterval = noteDurations[currentNote] * 1.1; // เพิ่มระยะเวลาหลังเล่นโน้ต
+      tone(BUZZER_PIN, melody[currentNote], noteDurations[currentNote]); // เล่นโน้ต
+      previousNoteMillis = currentMillis;
+      currentNote++;
+    } else {
+      songPlaying = false; // จบเพลง
+      currentNote = 0;
+      Serial.println("Song completed.");
+    }
   }
 
-  // เมื่อถึงเวลาที่กำหนดแล้วเริ่มเล่นเพลง
-  if (songStarted) {
-    if (currentNote < sizeof(melody) / sizeof(melody[0])) {
-      int noteDuration = noteDurations[currentNote];
-      tone(BUZZER_PIN, melody[currentNote], noteDuration); // เล่นโน้ต
-      delay(noteDuration * 1.1); // เพิ่มเวลาหลังจากเล่นโน้ตแต่ละตัว
-      noTone(BUZZER_PIN); // หยุดเสียงหลังจากโน้ตเสร็จ
+  // ดึงข้อมูลจาก API ทุกๆ 15 วินาที
+  if (currentMillis - previousApiMillis >= apiInterval) {
+    previousApiMillis = currentMillis;
+    fetchApiData();
+  }
+}
 
-      currentNote++; // ขยับไปยังโน้ตถัดไป
+void fetchApiData() {
+  WiFiClientSecure client;
+  client.setInsecure(); // ไม่ตรวจสอบใบรับรอง SSL (ใช้สำหรับทดสอบ)
+
+  HTTPClient https;
+  Serial.println("Connecting to API...");
+
+  if (https.begin(client, "https://npmh.moph.go.th/api/itwork/api/rxipd-order")) {
+    int httpCode = https.GET();
+
+    if (httpCode > 0) {
+      Serial.printf("HTTP Response code: %d\n", httpCode);
+
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = https.getString();
+        Serial.println("API Response: " + payload);
+
+        int apiValue = payload.toInt();
+        if (apiValue == 1) {
+          Serial.println("API Value = 1. Starting alert sound.");
+          if (!songPlaying) {
+            songPlaying = true; // เริ่มเล่นเพลง
+            previousNoteMillis = millis(); // ตั้งค่าตัวจับเวลาเริ่มเล่นเพลง
+          }
+        } else if (apiValue == 0) {
+          Serial.println("API Value = 0. No alert.");
+        } else {
+          Serial.println("API Value is not 1 or 0.");
+        }
+      }
     } else {
-      currentNote = 0; // รีเซ็ตกลับไปที่โน้ตแรก
-      delay(2000); // ดีเลย์ 2 วินาทีก่อนเริ่มเล่นเพลงใหม่
-      Serial.println("Song completed, waiting 2 seconds..."); // แสดงข้อความใน Serial Monitor
+      Serial.printf("HTTP GET failed, error: %s\n", https.errorToString(httpCode).c_str());
     }
+    https.end();
+  } else {
+    Serial.println("Unable to connect to HTTPS server.");
   }
 }
