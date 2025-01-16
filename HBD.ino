@@ -130,4 +130,5 @@ void blinkWifiLed() {
     ledWifiState = !ledWifiState;
     digitalWrite(LED_WIFI_PIN, ledWifiState);
   }
+  //
 }
