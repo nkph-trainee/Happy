@@ -2,7 +2,9 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h> // รองรับ HTTPS
 
-#define BUZZER_PIN D5
+#define BUZZER_PIN D1
+#define LED_ALERT_PIN D4
+#define LED_WIFI_PIN D8
 
 int melody[] = { 262, 262, 294, 262, 349, 330, 262, 262, 294, 262, 392, 349, 262, 262, 523, 440, 349, 330, 294, 466, 466, 440, 349, 392, 349 };
 int noteDurations[] = { 300, 300, 300, 300, 300, 600, 300, 300, 300, 300, 300, 600, 300, 300, 300, 300, 300, 300, 600, 200, 200, 200, 300, 300, 600 };
@@ -12,22 +14,36 @@ unsigned long interval = 5000;
 unsigned long apiInterval = 15000;
 unsigned long previousApiMillis = 0;
 
+unsigned long ledAlertPreviousMillis = 0;
+unsigned long ledWifiPreviousMillis = 0;
+unsigned long ledBlinkInterval = 500;
+
 int currentNote = 0;
 bool songStarted = false;
 bool alertPlaying = false;
+bool ledAlertState = false;
+bool ledWifiState = false;
 
 const char* ssid = "IT-CENTER_2.4GHz";
 const char* password = "74108520";
 
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LED_ALERT_PIN, OUTPUT);
+  pinMode(LED_WIFI_PIN, OUTPUT);
+
+  digitalWrite(LED_ALERT_PIN, LOW);
+  digitalWrite(LED_WIFI_PIN, LOW);
+
   Serial.begin(115200);
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
+    blinkWifiLed();
   }
+  digitalWrite(LED_WIFI_PIN, LOW); // Turn off WiFi LED when connected
   Serial.println("Connected to WiFi");
 }
 
@@ -72,16 +88,16 @@ void loop() {
           Serial.println(payload);
 
           int apiValue = payload.toInt();
-          if (apiValue == 1) {
-            Serial.println("API Value = 1. Alert will play.");
+          if (apiValue >= 1) {
+            Serial.println("API Value >= 1. Alert will play.");
+            digitalWrite(LED_ALERT_PIN, HIGH);
             if (!alertPlaying) {
               alertPlaying = true;
               playAlertSound();
             }
-          } else if (apiValue == 0) {
-            Serial.println("API Value = 0. No alert.");
           } else {
-            Serial.println("API Value is not 1 or 0.");
+            Serial.println("API Value = 0. No alert.");
+            digitalWrite(LED_ALERT_PIN, LOW);
           }
         }
       } else {
@@ -90,6 +106,7 @@ void loop() {
       https.end();
     } else {
       Serial.println("Unable to connect to HTTPS server.");
+      blinkWifiLed();
     }
   }
 }
@@ -104,4 +121,13 @@ void playAlertSound() {
   }
   alertPlaying = false;
   Serial.println("Alert sound completed.");
+}
+
+void blinkWifiLed() {
+  unsigned long currentMillis = millis();
+  if (currentMillis - ledWifiPreviousMillis >= ledBlinkInterval) {
+    ledWifiPreviousMillis = currentMillis;
+    ledWifiState = !ledWifiState;
+    digitalWrite(LED_WIFI_PIN, ledWifiState);
+  }
 }
